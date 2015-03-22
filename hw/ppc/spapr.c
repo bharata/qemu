@@ -1576,7 +1576,6 @@ static void ppc_spapr_init(MachineState *machine)
             fprintf(stderr, "Unable to find PowerPC CPU definition\n");
             exit(1);
         }
-        spapr_cpu_init(cpu);
     }
 
     /* allocate RAM */
@@ -1849,12 +1848,33 @@ static void spapr_nmi(NMIState *n, int cpu_index, Error **errp)
     }
 }
 
+static void spapr_machine_device_plug(HotplugHandler *hotplug_dev,
+                                      DeviceState *dev, Error **errp)
+{
+    if (object_dynamic_cast(OBJECT(dev), TYPE_CPU)) {
+        CPUState *cs = CPU(dev);
+        PowerPCCPU *cpu = POWERPC_CPU(cs);
+
+        spapr_cpu_init(cpu);
+    }
+}
+
+static HotplugHandler *spapr_get_hotpug_handler(MachineState *machine,
+                                             DeviceState *dev)
+{
+    if (object_dynamic_cast(OBJECT(dev), TYPE_CPU)) {
+        return HOTPLUG_HANDLER(machine);
+    }
+    return NULL;
+}
+
 static void spapr_machine_class_init(ObjectClass *oc, void *data)
 {
     MachineClass *mc = MACHINE_CLASS(oc);
     sPAPRMachineClass *smc = SPAPR_MACHINE_CLASS(oc);
     FWPathProviderClass *fwc = FW_PATH_PROVIDER_CLASS(oc);
     NMIClass *nc = NMI_CLASS(oc);
+    HotplugHandlerClass *hc = HOTPLUG_HANDLER_CLASS(oc);
 
     mc->init = ppc_spapr_init;
     mc->reset = ppc_spapr_reset;
@@ -1864,6 +1884,8 @@ static void spapr_machine_class_init(ObjectClass *oc, void *data)
     mc->default_boot_order = NULL;
     mc->kvm_type = spapr_kvm_type;
     mc->has_dynamic_sysbus = true;
+    mc->get_hotplug_handler = spapr_get_hotpug_handler;
+    hc->plug = spapr_machine_device_plug;
     smc->dr_phb_enabled = false;
     smc->dr_cpu_enabled = false;
     smc->dr_lmb_enabled = false;
@@ -1883,6 +1905,7 @@ static const TypeInfo spapr_machine_info = {
     .interfaces = (InterfaceInfo[]) {
         { TYPE_FW_PATH_PROVIDER },
         { TYPE_NMI },
+        { TYPE_HOTPLUG_HANDLER },
         { }
     },
 };
