@@ -807,6 +807,15 @@ static void spapr_finalize_fdt(sPAPREnvironment *spapr,
         spapr_populate_chosen_stdout(fdt, spapr->vio_bus);
     }
 
+    if (spapr->dr_cpu_enabled) {
+        int offset = fdt_path_offset(fdt, "/cpus");
+        ret = spapr_drc_populate_dt(fdt, offset, NULL,
+                                    SPAPR_DR_CONNECTOR_TYPE_CPU);
+        if (ret < 0) {
+            fprintf(stderr, "Couldn't set up CPU DR device tree properties\n");
+        }
+    }
+
     _FDT((fdt_pack(fdt)));
 
     if (fdt_totalsize(fdt) > FDT_MAX_SIZE) {
@@ -1393,6 +1402,16 @@ static SaveVMHandlers savevm_htab_handlers = {
     .load_state = htab_load,
 };
 
+static void spapr_drc_reset(void *opaque)
+{
+    sPAPRDRConnector *drc = opaque;
+    DeviceState *d = DEVICE(drc);
+
+    if (d) {
+        device_reset(d);
+    }
+}
+
 /* pSeries LPAR / sPAPR hardware init */
 static void ppc_spapr_init(MachineState *machine)
 {
@@ -1418,6 +1437,7 @@ static void ppc_spapr_init(MachineState *machine)
     long load_limit, fw_size;
     bool kernel_le = false;
     char *filename;
+    int smt = kvmppc_smt_threads();
 
     msi_supported = true;
 
@@ -1481,6 +1501,15 @@ static void ppc_spapr_init(MachineState *machine)
     spapr->dr_phb_enabled = smc->dr_phb_enabled;
     spapr->dr_cpu_enabled = smc->dr_cpu_enabled;
     spapr->dr_lmb_enabled = smc->dr_lmb_enabled;
+
+    if (spapr->dr_cpu_enabled) {
+        for (i = 0; i < max_cpus/smp_threads; i++) {
+            sPAPRDRConnector *drc =
+                spapr_dr_connector_new(OBJECT(machine),
+                                       SPAPR_DR_CONNECTOR_TYPE_CPU, i * smt);
+            qemu_register_reset(spapr_drc_reset, drc);
+        }
+    }
 
     /* init CPUs */
     if (cpu_model == NULL) {
