@@ -37,6 +37,7 @@
 #include "mmu-hash64.h"
 #include "qom/cpu.h"
 
+#include "hw/ppc/cpu-socket.h"
 #include "hw/boards.h"
 #include "hw/ppc/ppc.h"
 #include "hw/loader.h"
@@ -1482,7 +1483,6 @@ static void ppc_spapr_init(MachineState *machine)
     const char *kernel_cmdline = machine->kernel_cmdline;
     const char *initrd_filename = machine->initrd_filename;
     const char *boot_device = machine->boot_order;
-    PowerPCCPU *cpu;
     PCIHostState *phb;
     int i;
     MemoryRegion *sysmem = get_system_memory();
@@ -1497,7 +1497,12 @@ static void ppc_spapr_init(MachineState *machine)
     bool kernel_le = false;
     char *filename;
     int smt = kvmppc_smt_threads();
+    Object *socket;
+    QemuOpts *opts = qemu_opts_find(qemu_find_opts("smp-opts"), NULL);
+    int sockets = opts ? qemu_opt_get_number(opts, "sockets", 0) : 0;
+    int cores = (smp_cpus/smp_threads) ? smp_cpus/smp_threads : 1;
 
+    sockets = sockets ? sockets : cores;
     msi_supported = true;
 
     spapr = g_malloc0(sizeof(*spapr));
@@ -1574,12 +1579,10 @@ static void ppc_spapr_init(MachineState *machine)
     if (machine->cpu_model == NULL) {
         machine->cpu_model = kvm_enabled() ? "host" : "POWER7";
     }
-    for (i = 0; i < smp_cpus; i++) {
-        cpu = cpu_ppc_init(machine->cpu_model);
-        if (cpu == NULL) {
-            fprintf(stderr, "Unable to find PowerPC CPU definition\n");
-            exit(1);
-        }
+
+    for (i = 0; i < sockets; i++) {
+        socket = object_new(TYPE_POWERPC_CPU_SOCKET);
+        object_property_set_bool(socket, true, "realized", &error_abort);
     }
 
     /* allocate RAM */
