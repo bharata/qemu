@@ -26,4 +26,6 @@ typedef struct sPAPRCPUCore {
     PowerPCCPU *threads;
 } sPAPRCPUCore;
 
+void spapr_core_plug(HotplugHandler *hotplug_dev, DeviceState *dev,
+                     Error **errp);
 #endif

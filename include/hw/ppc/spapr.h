@@ -36,6 +36,7 @@ struct sPAPRMachineClass {
 
     /*< public >*/
     bool dr_lmb_enabled;       /* enable dynamic-reconfig/hotplug of LMBs */
+    bool dr_cpu_enabled;       /* enable dynamic-reconfig/hotplug of CPUs */
     bool use_ohci_by_default;  /* use USB-OHCI instead of XHCI */
 };
 
@@ -589,6 +590,9 @@ void spapr_hotplug_req_add_by_count(sPAPRDRConnectorType drc_type,
 void spapr_hotplug_req_remove_by_count(sPAPRDRConnectorType drc_type,
                                           uint32_t count);
 void spapr_cpu_init(sPAPRMachineState *spapr, PowerPCCPU *cpu, Error **errp);
+void spapr_cpu_reset(void *opaque);
+void *spapr_populate_hotplug_cpu_dt(DeviceState *dev, CPUState *cs,
+                                    int *fdt_offset, sPAPRMachineState *spapr);
 
 /* rtas-configure-connector state */
 struct sPAPRConfigureConnectorState {

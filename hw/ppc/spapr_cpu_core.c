@@ -14,6 +14,65 @@
 #include "qapi/visitor.h"
 #include <sysemu/cpus.h>
 
+void spapr_core_plug(HotplugHandler *hotplug_dev, DeviceState *dev,
+                     Error **errp)
+{
+    sPAPRMachineClass *smc = SPAPR_MACHINE_GET_CLASS(qdev_get_machine());
+    sPAPRMachineState *ms = SPAPR_MACHINE(qdev_get_machine());
+    sPAPRCPUCore *core = SPAPR_CPU_CORE(OBJECT(dev));
+    PowerPCCPU *cpu = &core->threads[0];
+    CPUState *cs = CPU(cpu);
+    int id = ppc_get_vcpu_dt_id(cpu);
+    sPAPRDRConnector *drc =
+        spapr_dr_connector_by_id(SPAPR_DR_CONNECTOR_TYPE_CPU, id);
+    sPAPRDRConnectorClass *drck;
+    Error *local_err = NULL;
+    void *fdt = NULL;
+    int fdt_offset = 0;
+
+    if (!smc->dr_cpu_enabled) {
+        /*
+         * This is a cold plugged CPU core but the machine doesn't support
+         * DR. So skip the hotplug path ensuring that the core is brought
+         * up online with out an associated DR connector.
+         */
+        return;
+    }
+
+    g_assert(drc);
+
+    /*
+     * Setup CPU DT entries only for hotplugged CPUs. For boot time or
+     * coldplugged CPUs DT entries are setup in spapr_finalize_fdt().
+     */
+    if (dev->hotplugged) {
+        fdt = spapr_populate_hotplug_cpu_dt(dev, cs, &fdt_offset, ms);
+        dev->hotplugged = true;
+    }
+
+    drck = SPAPR_DR_CONNECTOR_GET_CLASS(drc);
+    drck->attach(drc, dev, fdt, fdt_offset, !dev->hotplugged, &local_err);
+    if (local_err) {
+        g_free(fdt);
+        error_propagate(errp, local_err);
+        return;
+    }
+
+    if (dev->hotplugged) {
+        /*
+         * Send hotplug notification interrupt to the guest only in case
+         * of hotplugged CPUs.
+         */
+        spapr_hotplug_req_add_by_index(drc);
+    } else {
+        /*
+         * Set the right DRC states for cold plugged CPU.
+         */
+        drck->set_allocation_state(drc, SPAPR_DR_ALLOCATION_STATE_USABLE);
+        drck->set_isolation_state(drc, SPAPR_DR_ISOLATION_STATE_UNISOLATED);
+    }
+}
+
 static int spapr_cpu_core_realize_child(Object *child, void *opaque)
 {
     Error **errp = opaque;
@@ -30,6 +89,7 @@ static int spapr_cpu_core_realize_child(Object *child, void *opaque)
     if (*errp) {
         return 1;
     }
+    spapr_cpu_reset(cpu);
 
     return 0;
 }
