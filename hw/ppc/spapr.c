@@ -64,6 +64,7 @@
 
 #include "hw/compat.h"
 #include "qemu-common.h"
+#include "hw/ppc/spapr_cpu_core.h"
 
 #include <libfdt.h>
 
@@ -1614,8 +1615,11 @@ static void spapr_boot_set(void *opaque, const char *boot_device,
     machine->boot_order = g_strdup(boot_device);
 }
 
-static void spapr_cpu_init(sPAPRMachineState *spapr, PowerPCCPU *cpu,
-                           Error **errp)
+/*
+ * TODO: Check if some of these can be moved to rtas_start_cpu() where
+ * a few other things required for hotplugged CPUs are being done.
+ */
+void spapr_cpu_init(sPAPRMachineState *spapr, PowerPCCPU *cpu, Error **errp)
 {
     CPUPPCState *env = &cpu->env;
 
@@ -1643,7 +1647,6 @@ static void spapr_cpu_init(sPAPRMachineState *spapr, PowerPCCPU *cpu,
     }
 
     xics_cpu_setup(spapr->icp, cpu);
-
     qemu_register_reset(spapr_cpu_reset, cpu);
 }
 
@@ -1720,6 +1723,28 @@ static void spapr_validate_node_memory(MachineState *machine, Error **errp)
     }
 }
 
+/*
+ * Check to see if core is being hot-plugged into an already populated slot.
+ */
+static void spapr_cpu_core_allow_set_link(Object *obj, const char *name,
+                                          Object *val, Error **errp)
+{
+    Object *core = object_property_get_link(qdev_get_machine(), name, NULL);
+
+    /*
+     * Allow the link to be unset when the core is unplugged.
+     */
+    if (!val) {
+        return;
+    }
+
+    if (core) {
+        char *path = object_get_canonical_path(core);
+        error_setg(errp, "Slot %s already populated with %s", name, path);
+        g_free(path);
+    }
+}
+
 /* pSeries LPAR / sPAPR hardware init */
 static void ppc_spapr_init(MachineState *machine)
 {
@@ -1728,7 +1753,6 @@ static void ppc_spapr_init(MachineState *machine)
     const char *kernel_filename = machine->kernel_filename;
     const char *kernel_cmdline = machine->kernel_cmdline;
     const char *initrd_filename = machine->initrd_filename;
-    PowerPCCPU *cpu;
     PCIHostState *phb;
     int i;
     MemoryRegion *sysmem = get_system_memory();
@@ -1742,6 +1766,20 @@ static void ppc_spapr_init(MachineState *machine)
     long load_limit, fw_size;
     bool kernel_le = false;
     char *filename;
+    int spapr_cores = smp_cpus / smp_threads;
+    int spapr_max_cores = max_cpus / smp_threads;
+
+    if (smp_cpus % smp_threads) {
+        error_report("smp_cpus (%u) must be multiple of threads (%u)",
+                     smp_cpus, smp_threads);
+        exit(1);
+    }
+
+    if (max_cpus % smp_threads) {
+        error_report("max_cpus (%u) must be multiple of threads (%u)",
+                     max_cpus, smp_threads);
+        exit(1);
+    }
 
     msi_supported = true;
 
@@ -1800,13 +1838,37 @@ static void ppc_spapr_init(MachineState *machine)
     if (machine->cpu_model == NULL) {
         machine->cpu_model = kvm_enabled() ? "host" : "POWER7";
     }
-    for (i = 0; i < smp_cpus; i++) {
-        cpu = cpu_ppc_init(machine->cpu_model);
-        if (cpu == NULL) {
-            error_report("Unable to find PowerPC CPU definition");
-            exit(1);
+
+    spapr->cores = g_new0(Object *, spapr_max_cores);
+
+    for (i = 0; i < spapr_max_cores; i++) {
+        char name[32];
+
+        /*
+         * Create links from machine objects to all possible cores.
+         */
+        snprintf(name, sizeof(name), "%s[%d]", SPAPR_MACHINE_CPU_CORE_PROP, i);
+        object_property_add_link(OBJECT(spapr), name, TYPE_SPAPR_CPU_CORE,
+                                 (Object **)&spapr->cores[i],
+                                 spapr_cpu_core_allow_set_link,
+                                 OBJ_PROP_LINK_UNREF_ON_RELEASE,
+                                 &error_fatal);
+
+        /*
+         * Create cores and set link from machine object to core object for
+         * boot time CPUs and realize them.
+         */
+        if (i < spapr_cores) {
+            Object *core  = object_new(TYPE_SPAPR_CPU_CORE);
+
+            object_property_set_str(core, machine->cpu_model, "cpu_model",
+                                    &error_fatal);
+            object_property_set_int(core, smp_threads, "nr_threads",
+                                    &error_fatal);
+            object_property_set_str(core, name, CPU_CORE_SLOT_PROP,
+                                    &error_fatal);
+            object_property_set_bool(core, true, "realized", &error_fatal);
         }
-        spapr_cpu_init(spapr, cpu, &error_fatal);
     }
 
     if (kvm_enabled()) {
@@ -2259,7 +2321,8 @@ static void spapr_machine_device_unplug(HotplugHandler *hotplug_dev,
 static HotplugHandler *spapr_get_hotpug_handler(MachineState *machine,
                                              DeviceState *dev)
 {
-    if (object_dynamic_cast(OBJECT(dev), TYPE_PC_DIMM)) {
+    if (object_dynamic_cast(OBJECT(dev), TYPE_PC_DIMM) ||
+        object_dynamic_cast(OBJECT(dev), TYPE_SPAPR_CPU_CORE)) {
         return HOTPLUG_HANDLER(machine);
     }
     return NULL;

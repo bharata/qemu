@@ -17,11 +17,20 @@
 static int spapr_cpu_core_realize_child(Object *child, void *opaque)
 {
     Error **errp = opaque;
+    sPAPRMachineState *spapr = SPAPR_MACHINE(qdev_get_machine());
+    CPUState *cs = CPU(child);
+    PowerPCCPU *cpu = POWERPC_CPU(cs);
 
     object_property_set_bool(child, true, "realized", errp);
     if (*errp) {
         return 1;
     }
+
+    spapr_cpu_init(spapr, cpu, errp);
+    if (*errp) {
+        return 1;
+    }
+
     return 0;
 }
 

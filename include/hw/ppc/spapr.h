@@ -79,7 +79,10 @@ struct sPAPRMachineState {
     /*< public >*/
     char *kvm_type;
     MemoryHotplugState hotplug_memory;
+    Object **cores;
 };
+
+#define SPAPR_MACHINE_CPU_CORE_PROP "core"
 
 #define H_SUCCESS         0
 #define H_BUSY            1        /* Hardware busy -- retry later */
@@ -585,6 +588,7 @@ void spapr_hotplug_req_add_by_count(sPAPRDRConnectorType drc_type,
                                        uint32_t count);
 void spapr_hotplug_req_remove_by_count(sPAPRDRConnectorType drc_type,
                                           uint32_t count);
+void spapr_cpu_init(sPAPRMachineState *spapr, PowerPCCPU *cpu, Error **errp);
 
 /* rtas-configure-connector state */
 struct sPAPRConfigureConnectorState {
