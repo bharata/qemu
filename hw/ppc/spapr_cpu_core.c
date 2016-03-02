@@ -73,6 +73,90 @@ void spapr_core_plug(HotplugHandler *hotplug_dev, DeviceState *dev,
     }
 }
 
+static void spapr_cpu_core_cleanup(struct sPAPRCPUUnplugList *unplug_list)
+{
+    sPAPRCPUUnplug *unplug, *next;
+    Object *cpu;
+
+    QLIST_FOREACH_SAFE(unplug, unplug_list, node, next) {
+        cpu = unplug->cpu;
+        object_unparent(cpu);
+        QLIST_REMOVE(unplug, node);
+        g_free(unplug);
+    }
+}
+
+static void spapr_add_cpu_to_unplug_list(Object *cpu,
+                                         struct sPAPRCPUUnplugList *unplug_list)
+{
+    sPAPRCPUUnplug *unplug = g_malloc(sizeof(*unplug));
+
+    unplug->cpu = cpu;
+    QLIST_INSERT_HEAD(unplug_list, unplug, node);
+}
+
+static int spapr_cpu_release(Object *obj, void *opaque)
+{
+    DeviceState *dev = DEVICE(obj);
+    CPUState *cs = CPU(dev);
+    PowerPCCPU *cpu = POWERPC_CPU(cs);
+    struct sPAPRCPUUnplugList *unplug_list = opaque;
+
+    spapr_cpu_destroy(cpu);
+    cpu_remove_sync(cs);
+
+    /*
+     * We are still walking the core object's children list, and
+     * hence can't cleanup this CPU thread object just yet. Put
+     * it on a list for later removal.
+     */
+    spapr_add_cpu_to_unplug_list(obj, unplug_list);
+    return 0;
+}
+
+static void spapr_core_release(DeviceState *dev, void *opaque)
+{
+    struct sPAPRCPUUnplugList unplug_list;
+    sPAPRMachineState *spapr = SPAPR_MACHINE(qdev_get_machine());
+    sPAPRCPUCore *core = SPAPR_CPU_CORE(OBJECT(dev));
+    char *slot = object_property_get_str(OBJECT(dev), CPU_CORE_SLOT_PROP,
+                 &error_fatal);
+
+    QLIST_INIT(&unplug_list);
+    object_child_foreach(OBJECT(dev), spapr_cpu_release, &unplug_list);
+    spapr_cpu_core_cleanup(&unplug_list);
+
+    /* Unset the link from machine object to this core */
+    object_property_set_link(OBJECT(spapr), NULL, slot, NULL);
+    g_free(slot);
+
+    g_free(core->threads);
+    object_unparent(OBJECT(dev));
+}
+
+void spapr_core_unplug(HotplugHandler *hotplug_dev, DeviceState *dev,
+                       Error **errp)
+{
+    sPAPRCPUCore *core = SPAPR_CPU_CORE(OBJECT(dev));
+    PowerPCCPU *cpu = &core->threads[0];
+    int id = ppc_get_vcpu_dt_id(cpu);
+    sPAPRDRConnector *drc =
+        spapr_dr_connector_by_id(SPAPR_DR_CONNECTOR_TYPE_CPU, id);
+    sPAPRDRConnectorClass *drck;
+    Error *local_err = NULL;
+
+    g_assert(drc);
+
+    drck = SPAPR_DR_CONNECTOR_GET_CLASS(drc);
+    drck->detach(drc, dev, spapr_core_release, NULL, &local_err);
+    if (local_err) {
+        error_propagate(errp, local_err);
+        return;
+    }
+
+    spapr_hotplug_req_remove_by_index(drc);
+}
+
 static int spapr_cpu_core_realize_child(Object *child, void *opaque)
 {
     Error **errp = opaque;

@@ -2379,11 +2379,27 @@ static void spapr_machine_device_plug(HotplugHandler *hotplug_dev,
     }
 }
 
+void spapr_cpu_destroy(PowerPCCPU *cpu)
+{
+    sPAPRMachineState *spapr = SPAPR_MACHINE(qdev_get_machine());
+
+    xics_cpu_destroy(spapr->icp, cpu);
+    qemu_unregister_reset(spapr_cpu_reset, cpu);
+}
+
 static void spapr_machine_device_unplug(HotplugHandler *hotplug_dev,
                                       DeviceState *dev, Error **errp)
 {
+    sPAPRMachineClass *smc = SPAPR_MACHINE_GET_CLASS(qdev_get_machine());
+
     if (object_dynamic_cast(OBJECT(dev), TYPE_PC_DIMM)) {
         error_setg(errp, "Memory hot unplug not supported by sPAPR");
+    } else if (object_dynamic_cast(OBJECT(dev), TYPE_SPAPR_CPU_CORE)) {
+        if (!smc->dr_cpu_enabled) {
+            error_setg(errp, "CPU hot unplug not supported on this machine");
+            return;
+        }
+        spapr_core_unplug(hotplug_dev, dev, errp);
     }
 }
 

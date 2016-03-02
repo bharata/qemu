@@ -593,6 +593,7 @@ void spapr_cpu_init(sPAPRMachineState *spapr, PowerPCCPU *cpu, Error **errp);
 void spapr_cpu_reset(void *opaque);
 void *spapr_populate_hotplug_cpu_dt(DeviceState *dev, CPUState *cs,
                                     int *fdt_offset, sPAPRMachineState *spapr);
+void spapr_cpu_destroy(PowerPCCPU *cpu);
 
 /* rtas-configure-connector state */
 struct sPAPRConfigureConnectorState {

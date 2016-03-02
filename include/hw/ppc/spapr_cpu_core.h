@@ -28,4 +28,15 @@ typedef struct sPAPRCPUCore {
 
 void spapr_core_plug(HotplugHandler *hotplug_dev, DeviceState *dev,
                      Error **errp);
+void spapr_core_unplug(HotplugHandler *hotplug_dev, DeviceState *dev,
+                       Error **errp);
+
+/* List to store unplugged CPU objects for cleanup during unplug */
+typedef struct sPAPRCPUUnplug {
+    Object *cpu;
+    QLIST_ENTRY(sPAPRCPUUnplug) node;
+} sPAPRCPUUnplug;
+
+QLIST_HEAD(sPAPRCPUUnplugList, sPAPRCPUUnplug);
+
 #endif
