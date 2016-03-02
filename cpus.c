@@ -953,6 +953,18 @@ void async_run_on_cpu(CPUState *cpu, void (*func)(void *data), void *data)
     qemu_cpu_kick(cpu);
 }
 
+static void qemu_kvm_destroy_vcpu(CPUState *cpu)
+{
+    if (kvm_destroy_vcpu(cpu) < 0) {
+        error_report("kvm_destroy_vcpu failed");
+        exit(EXIT_FAILURE);
+    }
+}
+
+static void qemu_tcg_destroy_vcpu(CPUState *cpu)
+{
+}
+
 static void flush_queued_work(CPUState *cpu)
 {
     struct qemu_work_item *wi;
@@ -1053,6 +1065,11 @@ static void *qemu_kvm_cpu_thread_fn(void *arg)
             }
         }
         qemu_kvm_wait_io_event(cpu);
+        if (cpu->exit && !cpu_can_run(cpu)) {
+            qemu_kvm_destroy_vcpu(cpu);
+            qemu_mutex_unlock_iothread();
+            return NULL;
+        }
     }
 
     return NULL;
@@ -1108,6 +1125,7 @@ static void tcg_exec_all(void);
 static void *qemu_tcg_cpu_thread_fn(void *arg)
 {
     CPUState *cpu = arg;
+    CPUState *remove_cpu = NULL;
 
     rcu_register_thread();
 
@@ -1145,6 +1163,16 @@ static void *qemu_tcg_cpu_thread_fn(void *arg)
             }
         }
         qemu_tcg_wait_io_event(QTAILQ_FIRST(&cpus));
+        CPU_FOREACH(cpu) {
+            if (cpu->exit && !cpu_can_run(cpu)) {
+                remove_cpu = cpu;
+                break;
+            }
+        }
+        if (remove_cpu) {
+            qemu_tcg_destroy_vcpu(remove_cpu);
+            remove_cpu = NULL;
+        }
     }
 
     return NULL;
@@ -1299,6 +1327,13 @@ void resume_all_vcpus(void)
     CPU_FOREACH(cpu) {
         cpu_resume(cpu);
     }
+}
+
+void cpu_remove(CPUState *cpu)
+{
+    cpu->stop = true;
+    cpu->exit = true;
+    qemu_cpu_kick(cpu);
 }
 
 /* For temporary buffers for forming a name */
@@ -1517,6 +1552,9 @@ static void tcg_exec_all(void)
                 break;
             }
         } else if (cpu->stop || cpu->stopped) {
+            if (cpu->exit) {
+                next_cpu = CPU_NEXT(cpu);
+            }
             break;
         }
     }

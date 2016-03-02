@@ -237,6 +237,7 @@ struct kvm_run;
  * @halted: Nonzero if the CPU is in suspended state.
  * @stop: Indicates a pending stop request.
  * @stopped: Indicates the CPU has been artificially stopped.
+ * @exit: Indicates the CPU has exited due to an unplug operation.
  * @crash_occurred: Indicates the OS reported a crash (panic) for this CPU
  * @tcg_exit_req: Set to force TCG to stop executing linked TBs for this
  *           CPU and return to its top level loop.
@@ -289,6 +290,7 @@ struct CPUState {
     bool created;
     bool stop;
     bool stopped;
+    bool exit;
     bool crash_occurred;
     bool exit_request;
     uint32_t interrupt_request;
@@ -754,6 +756,14 @@ void cpu_exit(CPUState *cpu);
  * Resumes CPU, i.e. puts CPU into runnable state.
  */
 void cpu_resume(CPUState *cpu);
+
+/**
+ * cpu_remove:
+ * @cpu: The CPU to remove.
+ *
+ * Requests the CPU to be removed.
+ */
+void cpu_remove(CPUState *cpu);
 
 /**
  * qemu_init_vcpu:
